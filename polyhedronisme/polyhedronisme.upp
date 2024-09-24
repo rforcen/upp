@@ -1,0 +1,24 @@
+uses
+	CtrlLib,
+	GLCtrl;
+
+file
+	main.cpp,
+	/home/asd/MyApps/polyhedronisme/poly/color.hpp,
+	/home/asd/MyApps/polyhedronisme/poly/common.hpp,
+	/home/asd/MyApps/polyhedronisme/poly/fastflags.h,
+	/home/asd/MyApps/polyhedronisme/poly/johnson.hpp,
+	/home/asd/MyApps/polyhedronisme/poly/parser.hpp,
+	/home/asd/MyApps/polyhedronisme/poly/poly_operations_mt.hpp,
+	/home/asd/MyApps/polyhedronisme/poly/polyflag.hpp,
+	/home/asd/MyApps/polyhedronisme/poly/polyhedron.hpp,
+	/home/asd/MyApps/polyhedronisme/poly/scanner.h,
+	/home/asd/MyApps/polyhedronisme/poly/seeds.hpp,
+	/home/asd/MyApps/polyhedronisme/poly/simd.h,
+	/home/asd/MyApps/polyhedronisme/poly/Thread.h,
+	/home/asd/MyApps/polyhedronisme/poly/Timer.h,
+	/home/asd/MyApps/polyhedronisme/poly/johnson.o;
+
+mainconfig
+	"" = "GUI";
+
