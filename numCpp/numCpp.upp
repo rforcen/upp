@@ -1,7 +1,8 @@
 file
 	main.cpp,
 	/home/asd/MyApps/numCpp/numCpp.h,
-	/home/asd/MyApps/numCpp/compiler.h;
+	/home/asd/MyApps/numCpp/compiler.h,
+	/home/asd/MyApps/numCpp/ncZlib.h;
 
 mainconfig
 	"" = "";

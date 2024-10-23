@@ -152,11 +152,17 @@ class NC {
   }
 
   NC rand() {
-    for (auto &d : data) d = static_cast<T>(::random()) / RAND_MAX;
+    const int _max_range = 16000;
+    random_device rd;
+    mt19937 generator(rd());
+    uniform_int_distribution<int> distribution(1, _max_range);
+
+    for (auto &d : data)
+      d = static_cast<T>(distribution(generator)) / _max_range;
     return *this;
   }
   NC randMT() {
-    const int _max_range = 32000;
+    const int _max_range = 16000;
     random_device rd;
     mt19937 generator(rd());
     uniform_int_distribution<int> distribution(1, _max_range);
@@ -199,9 +205,16 @@ class NC {
 
   void print(string s) {
     cout << s << '(' << dimsStr() << ") size:(" << size << "):";
-    if (size == 0) return;
 
-    print(0, 0);
+    if (size == 0)
+      cout << "[]";
+    else {
+      if (ndims == 0 && size == 1)
+        cout << "[" << data[0] << "]";
+      else
+        print(0, 0);
+    }
+
     cout << endl;
   }
   void print(int level = 0, int offset = 0) {
@@ -837,7 +850,14 @@ class NC {
     return res;
   }
 
-  NC slice(const VInt &index) {
+  NC range(int from, int to) {  // 1d range array
+    NC res(to - from);
+    copy(data.begin() + from, data.begin() + to, res.data.begin());
+    return res;
+  }
+
+  NC slice(const VInt &index) {  // index is < ndim-1 size, NC a(3,4,5); auto
+                                 // b=a.slice({2,3});
     assert(!index.empty() && "slice with empty array not allowed");
 
     auto widx = index;

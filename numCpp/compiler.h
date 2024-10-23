@@ -142,7 +142,6 @@ struct ASTNode {
 class Parser {
   vector<Token> tokens;
   size_t pos;
-  
 
   Token currentToken() { return tokens[pos]; }
 
@@ -150,7 +149,7 @@ class Parser {
     if (currentToken().type == type) {
       ++pos;
     } else {
-      ok=false; // throw runtime_error("Unexpected token");
+      ok = false;  // throw runtime_error("Unexpected token");
     }
   }
 
@@ -255,16 +254,16 @@ class Parser {
       consume(token.type);
       return new ASTNode{token.type, token.value};
     } else {
-      ok=false; // throw runtime_error("Unexpected token");
+      ok = false;  // throw runtime_error("Unexpected token");
       return nullptr;
     }
   }
 
  public:
   Parser(const vector<Token>& tokens) : tokens(tokens), pos(0) {}
-  
+
   ASTNode* parse() { return parseExpression(); }
-  bool ok=true;
+  bool ok = true;
 };
 
 void generateCode(ASTNode* node) {
@@ -321,6 +320,25 @@ void generateCode(ASTNode* node) {
     generateCode(node->children[0]);
     generateCode(node->children[1]);
     cout << "GE" << endl;
+  }
+}
+
+// Function to flatten the AST into a vector
+void flattenAST(ASTNode* root, std::vector<ASTNode*>& flatVector) {
+  if (!root) return;
+
+  std::stack<ASTNode*> stack;
+  stack.push(root);
+
+  while (!stack.empty()) {
+    ASTNode* node = stack.top();
+    stack.pop();
+    flatVector.push_back(node);
+
+    // Push children in reverse order to maintain left-to-right order
+    for (auto it = node->children.rbegin(); it != node->children.rend(); ++it) {
+      stack.push(*it);
+    }
   }
 }
 
@@ -486,20 +504,25 @@ bool execute(ASTNode* node, double x) {
 
 class Evaluator {
  public:  // props.
-  ASTNode* ast = nullptr;
-  bool ok=true;
+  bool ok = true;
 
  public:
   Evaluator(string expr) {
     auto tokens = tokenize(expr);
     Parser parser(tokens);
+
     ast = parser.parse();
-    
-    ok=parser.ok;
+    if (parser.ok) flattenAST(ast, vAst);
+
+    ok = parser.ok;
   }
   ~Evaluator() { deleteAST(ast); }
 
   bool evaluate(double x) { return execute(ast, x); }
+
+ private:
+  vector<ASTNode*> vAst;
+  ASTNode* ast = nullptr;
 
  private:
   void deleteAST(ASTNode* node) {
@@ -509,5 +532,4 @@ class Evaluator {
     delete node;
   }
 };
-
 

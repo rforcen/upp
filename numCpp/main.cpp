@@ -8,6 +8,11 @@
 #include "Thread.h"
 #include "numCpp.h"
 
+// #define _USE_BOOST
+// #define _USE_MPREAL
+// #define _USE_HALF
+#define _USE_ZLIB
+
 typedef long double Real;
 
 void test01() {
@@ -170,6 +175,7 @@ void test09(int n = 400) {
   cout << "relative diff:" << abs(d - dm) / d << endl;
 }
 
+#ifdef _USE_BOOST
 // boost decl. best known option for MP
 #include <boost/multiprecision/cpp_dec_float.hpp>
 #include <boost/multiprecision/cpp_bin_float.hpp>
@@ -206,6 +212,7 @@ void test10(int n = 400) {
   auto relDiff = abs(dn1 - dn2) / dn2;
   printf("rel. diff: %s\n", bfmt(relDiff, "%f").c_str());
 }
+#endif
 
 #ifdef _USING_MPREAL  // slower than boost
 #include "mpreal.h"
@@ -391,10 +398,73 @@ void test20() {
   n2.print("n2:");
 }
 
+#ifdef _USE_HALF
+
+#include "half.h"
+void test21() {
+  int n = 30;
+  using half_float::half;
+  NC<half> a = NC<half>::random(n, n), b(n, n);
+  b.rand();
+
+  cout << "size of half:" << sizeof(half) << endl;  // 2 bytes
+
+  a.slice({n / 3}).range(0, n / 3).print("a:");
+  b.slice({n / 3}).range(0, n / 3).print("b:");
+
+  auto c = a.slice({n / 3, 0});  // at(n/3,0)
+  cout << "size of c:" << c.size << endl;
+  c.print("c:");
+
+  // compare performance w/float: float:half performance ratio -> 6:70 1:11
+
+  auto lh = Timer().chrono([&] {
+    for (int i = 0; i < n * 100; i++) a.detST();
+  });
+  printf("%d items, lap half:%ld\n", n, lh);
+
+  NC<float> af(a);
+  auto lf = Timer().chrono([&] {
+    for (int i = 0; i < n * 100; i++) af.detST();
+  });
+
+  printf("%d items, lap float:%ld\n", n, lf);
+}
+#endif
+
+#ifdef _USE_ZLIB
+#include "ncZlib.h"
+
+void test22() {
+  puts("compressing test");
+
+  NC a = NC<double>::random(30, 30, 30);
+
+  // enhace compression ratio by reducing # of different #'s
+  a.inApplyMT([&](double x) { return floor(x * 10) / 10.0; });
+
+  auto sa = a.sum();
+
+  Timer t;
+  NCzlib za(a);
+
+  printf("org. size:%d, compressed size %d, ratio %.1f %%, lap:%ld ms\n",
+         a.sizeBytes, za.size(), 100 - floor(100.0 * za.size() / a.sizeBytes),
+         t.lap());
+
+  za.decompress();
+
+  if (sa == a.sum())
+    puts("decompress ok");
+  else
+    puts("decompression failure!");
+}
+#endif
+
 int main(int argc, const char* argv[]) {
   srand(time(nullptr));
 
-  test17();
+  test22();
 
   return 0;
 }
