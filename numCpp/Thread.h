@@ -17,14 +17,14 @@ using std::vector;
 
 class FromTo {
  public:
-  FromTo(int from, int to) : from(from), to(to) {}
-  int from, to;
+  FromTo(size_t from, size_t to) : from(from), to(to) {}
+  size_t from, to;
 };
 
 class MyThread {
  public:
   MyThread() : nth(nCpus()), threads(vector<thread>(nth)), size(nCpus()) {}
-  MyThread(int size)
+  MyThread(size_t size)
       : nth(size < nCpus() ? size : nCpus()),
         size(size),
         threads(vector<thread>(nth)) {
@@ -43,11 +43,11 @@ class MyThread {
   void chunk_ranges()  // Create the result and calculate the stride size and
                        // the remainder if any.
   {
-    int stride = size / nth, first = 0, extra = size % nth;
+    size_t stride = size / nth, first = 0, extra = size % nth;
 
     ranges.clear();
-    for (int i = 0; i < nth; i++) {
-      int last = first + stride;
+    for (size_t i = 0; i < nth; i++) {
+      size_t last = first + stride;
       if (extra > 0) {
         extra--;
         last++;
@@ -58,26 +58,26 @@ class MyThread {
     // for (auto r : ranges)  printf("%d, ", r.second - r.first);
   }
 
-  int from(int t) { return ranges[t].from; }
-  int to(int t) { return ranges[t].to; }
+  size_t from(int t) { return ranges[t].from; }
+  size_t to(int t) { return ranges[t].to; }
 
-  void run(std::function<void(int, int, int)> const &lambda) {  // t, from, to
+  void run(std::function<void(int, size_t, size_t)> const &lambda) {  // t, from, to
     for (int t = 0; t < nth; t++) {
       threads[t] = thread([this, lambda, t]() { lambda(t, from(t), to(t)); });
     }
     for (int t = 0; t < nth; t++) threads[t].join();
   }
 
-  void run(std::function<void(int)> const &lambda) {  // i
+  void run(std::function<void(size_t)> const &lambda) {  // i
     for (int t = 0; t < nth; t++) {
       threads[t] = thread([this, lambda, t]() {
-        for (int i = from(t); i < to(t); i++) lambda(i);
+        for (size_t i = from(t); i < to(t); i++) lambda(i);
       });
     }
     for (int t = 0; t < nth; t++) threads[t].join();
   }
 
-  void run(std::function<void(int, int)> const &lambda) {  // t, i
+  void run(std::function<void(int, size_t)> const &lambda) {  // t, i
     for (int t = 0; t < nth; t++) {
       threads[t] = thread([this, lambda, t]() {
         for (int i = from(t); i < to(t); i++) lambda(t, i);
@@ -89,13 +89,14 @@ class MyThread {
   void run(std::function<void(void)> const &lambda) {  // ()
     for (int t = 0; t < nth; t++) {
       threads[t] = thread([this, lambda, t]() {
-        for (int i = from(t); i < to(t); i++) lambda();
+        for (size_t i = from(t); i < to(t); i++) lambda();
       });
     }
     for (int t = 0; t < nth; t++) threads[t].join();
   }
 
-  int nth = nCpus(), size = 0;
+  int nth = nCpus();
+  size_t size = 0;
   vector<thread> threads;
   vector<FromTo> ranges;
 };

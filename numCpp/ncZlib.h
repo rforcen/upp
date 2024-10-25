@@ -18,7 +18,7 @@ class NCzlib {
     vc.clear();
   }
 
-  int size() { return vc.size(); }
+  size_t size() { return vc.size(); }
 
  private:
   vector<Byte> vc;      // stores compressed data

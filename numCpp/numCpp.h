@@ -14,12 +14,19 @@
 #include <fstream>
 
 #include "Thread.h"
-#include "compiler.h"
+#include "boolCompiler.h"
 
 using namespace std;
 
-typedef vector<vector<int>> VVInt;
-typedef vector<int> VInt;
+#define __USE_COMPRESS 1
+
+#if __USE_COMPRESS == 1
+#include <zlib.h>
+#endif
+
+// vector<int> types
+typedef vector<vector<size_t>> VVInt;
+typedef vector<size_t> VInt;
 
 template <typename T>  // vector concat '+' operator
 vector<T> operator+(vector<T> a, vector<T> b) {
@@ -30,11 +37,14 @@ vector<T> operator+(vector<T> a, vector<T> b) {
   return result;
 }
 
-/////////////////////
+//---------------------------- Vec ---------------------------
 
 template <typename T>
 class Vec : public vector<T> {
  public:
+  Vec() {}
+  Vec(Vec &o) { *this = o; }
+  void operator=(Vec &o) { *this = o; }
   T prod() {
     T p = 1;
     for (auto &v : *this) p *= v;
@@ -47,8 +57,10 @@ class Vec : public vector<T> {
   bool operator==(Vec &o) {
     return equal(this->begin(), this->end(), o.begin());
   }
-  T ix(int i) { return this->data[this->size() - i - 1]; }
+  T pyix(size_t i) { return this->data[this->size() - i - 1]; }
 };
+
+//--------------------------- NC ----------------------------
 
 template <typename T = double>
 class NC {
@@ -56,10 +68,11 @@ class NC {
   vector<T> data;
   VInt dims, mlt;
   int ndims = 0;
-  int dim0 = 0;
-  int size = 0, sizeBytes = 0;
+  size_t dim0 = 0;
+  size_t size = 0, sizeBytes = 0;
+  vector<byte> _compressedData;
 
-  typedef struct _HeaderNPY {
+  typedef struct _HeaderNPY {  // numpy file header (np.save / load)
     _HeaderNPY(uint16_t headLen) : headLen(headLen) {}
     _HeaderNPY() {}
 
@@ -72,70 +85,74 @@ class NC {
   NC() {}
 
   NC(const NC &o) {
-    data.clear();
-    dims.clear();
-    mlt.clear();
-
-    data.assign(o.data.begin(), o.data.end());
-    dims.assign(o.dims.begin(), o.dims.end());
-    mlt.assign(o.mlt.begin(), o.mlt.end());
+    data = o.data;
+    dims = o.dims;
+    mlt = o.mlt;
 
     ndims = o.ndims;
-    dim0 = (ndims > 0) ? dim(0) : 0;
+    dim0 = o.dim0;
     size = o.size;
     sizeBytes = o.sizeBytes;
   }
 
   template <typename U>  // construct from another type
   NC(NC<U> &o) {
-    data.clear();
-    dims.clear();
-    mlt.clear();
-
-    dims.assign(o.dims.begin(), o.dims.end());
-    mlt.assign(o.mlt.begin(), o.mlt.end());
+    dims = o.dims;
+    mlt = o.mlt;
 
     ndims = o.ndims;
-    dim0 = (ndims > 0) ? dim(0) : 0;
+    dim0 = o.dim0;
     size = o.size;
     sizeBytes = o.sizeBytes;
 
+    data.clear();
     data.resize(size);  // alloc & copy data
     o.copyTo(*this);
   }
 
   template <typename... Args>
   NC(Args... args) {
-    dims = VInt{args...};
+    for (auto &d : vector<int>{args...}) dims.push_back(d);
+
     __recalc();
   }
+  NC(size_t n) { __recalc({n}); }
+  NC(size_t n, size_t m) { __recalc({n, m}); }
+  NC(size_t d2, size_t d1, size_t d0) { __recalc({d2, d1, d0}); }
+  NC(size_t d3, size_t d2, size_t d1, size_t d0) { __recalc({d3, d2, d1, d0}); }
+
+  NC(VInt dims) : dims(dims) { __recalc(); }
 
  private:
+  void __recalc(VInt _dims) {
+    dims = _dims;
+    __recalc();
+  }
   void __recalc() {
     ndims = dims.size();
     dim0 = (ndims > 0) ? dim(0) : 0;
 
-    size = accumulate(dims.begin(), dims.end(), 1, multiplies<int>());
+    size = accumulate(dims.begin(), dims.end(), 1, multiplies<size_t>());
     sizeBytes = size * sizeof(T);
     data.resize(size);
     mlt.resize(ndims);
-    for (int i = 0, nn = 1; i < ndims; i++) {
+    for (size_t i = 0, nn = 1; i < ndims; i++) {
       mlt[ndims - 1 - i] = nn;
       nn *= dims[ndims - 1 - i];
     }
   }
 
  public:
-  static NC arange(int r) {
+  static NC arange(size_t r) {
     NC nc(r);
-    for (int i = 0; i < r; i++) nc[i] = i;
+    for (auto i = 0; i < r; i++) nc[i] = i;
 
     return nc;
   }
 
-  static NC identity(int n) {
+  static NC identity(size_t n) {
     NC nc(n, n);
-    for (int i = 0; i < n; i++) nc(i, i) = 1;
+    for (size_t i = 0; i < n; i++) nc(i, i) = 1;
 
     return nc;
   }
@@ -145,6 +162,8 @@ class NC {
     dims.clear();
     mlt.clear();
   }
+
+  // static NC random(VInt args) { return NC<T>(args).randMT(); }
 
   template <typename... Args>
   static NC random(Args... args) {
@@ -167,8 +186,8 @@ class NC {
     mt19937 generator(rd());
     uniform_int_distribution<int> distribution(1, _max_range);
 
-    MyThread(size).run([&](int t, int from, int to) {
-      for (int i = from; i < to; i++)
+    MyThread(size).run([&](int t, size_t from, size_t to) {
+      for (auto i = from; i < to; i++)
         data[i] = static_cast<T>(distribution(generator)) / _max_range;
     });
 
@@ -179,7 +198,7 @@ class NC {
     return *this;
   }
   NC zeros() {
-    for (auto &d : data) d = 0;
+    for (auto &d : data) d = T(0);
     return *this;
   }
   T sum() {
@@ -188,7 +207,7 @@ class NC {
     return s;
   }
   T prod() {
-    T p = static_cast<T>(1 + 1e-10);
+    T p = static_cast<T>(1);
     for (auto &d : data) p *= d;
     return p;
   }
@@ -217,17 +236,17 @@ class NC {
 
     cout << endl;
   }
-  void print(int level = 0, int offset = 0) {
+  void print(size_t level = 0, size_t offset = 0) {
     if (level == ndims - 1) {
       cout << "[";
-      for (int i = 0; i < dims[level]; ++i) {
+      for (size_t i = 0; i < dims[level]; ++i) {
         cout << data[offset + i];
         if (i < dims[level] - 1) cout << ", ";
       }
       cout << "]";
     } else {
       cout << "[";
-      for (int i = 0; i < dims[level]; ++i) {
+      for (size_t i = 0; i < dims[level]; ++i) {
         print(level + 1, offset + i * mlt[level]);
         if (i < dims[level] - 1) cout << ", ";
       }
@@ -244,9 +263,9 @@ class NC {
     return *this;
   }
   NC inApplyMT(function<T(T)> const &lambda) {  // in place
-    MyThread(size).run([&](int t, int from, int to) {
+    MyThread(size).run([&](size_t t, size_t from, size_t to) {
       auto d = data.begin() + from;
-      for (int i = from; i < to; i++, d++) *d = lambda(*d);
+      for (size_t i = from; i < to; i++, d++) *d = lambda(*d);
     });
     return *this;
   }
@@ -312,9 +331,9 @@ class NC {
   // index
   bool eqDims(VInt &dims) { return this->ndims == dims.size(); }
 
-  template <typename... Args>
-  int calcIndex(Args... args) {
-    VInt index = {args...};  // vector<int>{args...}
+  /*template <typename... Args>
+  size_t calcIndex(Args... args) {
+    VInt index = {args...};  // vector<size_t>{args...}
 
     if (!eqDims(index)) throw out_of_range("wrong index size");
 
@@ -329,14 +348,14 @@ class NC {
         return index[0] * mlt[0] + index[1] * mlt[1] + index[2] * mlt[2] +
                index[3];
       default: {
-        int res = 0;
+        size_t res = 0;
         for (int i = 0; i < mlt.size(); i++) res += mlt[i] * index[i];
         return res;
       }
     }
-  }
+  }*/
 
-  int calcIndex0(VInt index) {
+  size_t calcIndex(VInt index) {
     if (!eqDims(index)) throw out_of_range("wrong index size");
 
     switch (ndims) {
@@ -350,7 +369,7 @@ class NC {
         return index[0] * mlt[0] + index[1] * mlt[1] + index[2] * mlt[2] +
                index[3];
       default: {
-        int res = 0;
+        size_t res = 0;
         for (int i = 0; i < mlt.size(); i++) res += mlt[i] * index[i];
         return res;
       }
@@ -358,50 +377,48 @@ class NC {
   }
 
  public:
-  template <typename... Args>
-  T &at(Args... args) {
-    int ix = calcIndex(args...);
+  T &at(vector<size_t> args) {
+    size_t ix = calcIndex(args);
     if (ix >= size || ix < 0) throw out_of_range("index out of range");
 
     return data[ix];
   }
-  T &at(vector<int> args) {
-    int ix = calcIndex(args);
+  inline T &at(size_t i) { return data[i]; }
+  inline T &at(size_t r, size_t c) { return data[r * dim0 + c]; }
+  inline T &at(size_t i2, size_t i1, size_t i0) {
+    return data[i0 * mlt[0] + i1 * mlt[1] + i2];
+  }
+
+  /*T &operator[](initializer_list<size_t> args) {
+    size_t ix = calcIndex0(args);
     if (ix >= size || ix < 0) throw out_of_range("index out of range");
 
     return data[ix];
   }
-  inline T &at(int r, int c) { return data[r * dim0 + c]; }
-  inline T &at(int i) { return data[i]; }
-
-  T &operator[](initializer_list<int> args) {
-    int ix = calcIndex0(args);
+  const T &operator[](initializer_list<size_t> args) const {
+    size_t ix = calcIndex0(args);
     if (ix >= size || ix < 0) throw out_of_range("index out of range");
 
     return data[ix];
-  }
-  const T &operator[](initializer_list<int> args) const {
-    int ix = calcIndex0(args);
-    if (ix >= size || ix < 0) throw out_of_range("index out of range");
-
-    return data[ix];
-  }
+  }*/
 
   // r,c index
-  inline T &operator()(int r, int c) { return data[r * dim0 + c]; }  // nc(i,j)
-  inline T &operator[](int i) { return data[i]; }                    // nc(i)
+  inline T &operator()(size_t r, size_t c) {
+    return data[r * dim0 + c];
+  }                                                   // nc(i,j)
+  inline T &operator[](size_t i) { return data[i]; }  // nc(i)
 
   // operators (+)
   NC operator+(NC o) {
     if (diffDims(o)) throw out_of_range("incompatible dimensions");
 
     NC r(*this);
-    for (int i = 0; i < r.size; i++) r.at(i) += o.at(i);
+    for (size_t i = 0; i < r.size; i++) r.at(i) += o.at(i);
     return r;
   }
   void operator+=(NC &o) {
     if (diffDims(o)) throw out_of_range("incompatible dimensions");
-    for (int i = 0; i < size; i++) at(i) += o(i);
+    for (size_t i = 0; i < size; i++) at(i) += o(i);
   }
   NC operator+(T o) {
     NC r(*this);
@@ -415,16 +432,16 @@ class NC {
   NC operator-(NC &o) {
     assert(areOper(o) && "different dimensions");
     NC r(*this);
-    for (int i = 0; i < r.size; i++) r.at(i) -= o.at(i);
+    for (size_t i = 0; i < r.size; i++) r.at(i) -= o.at(i);
     return r;
   }
   void operator-=(NC &o) {
     if (diffDims(o)) throw out_of_range("incompatible dimensions");
-    for (int i = 0; i < size; i++) at(i) -= o(i);
+    for (size_t i = 0; i < size; i++) at(i) -= o(i);
   }
   NC operator-(T o) {
     NC r(*this);
-    for (int i = 0; i < r.size; i++) r(i) -= o;
+    for (size_t i = 0; i < r.size; i++) r(i) -= o;
     return r;
   }
   void operator-=(T o) {
@@ -434,16 +451,16 @@ class NC {
   NC operator*(NC &o) {
     assert(areOper(o) && "different dimensions");
     NC r(*this);
-    for (int i = 0; i < r.size; i++) r.at(i) *= o.at(i);
+    for (size_t i = 0; i < r.size; i++) r.at(i) *= o.at(i);
     return r;
   }
   void operator*=(NC &o) {
     if (diffDims(o)) throw out_of_range("incompatible dimensions");
-    for (int i = 0; i < size; i++) at(i) *= o.at(i);
+    for (size_t i = 0; i < size; i++) at(i) *= o.at(i);
   }
   NC operator*(T o) {
     NC r(*this);
-    for (int i = 0; i < r.size; i++) r(i) *= o;
+    for (size_t i = 0; i < r.size; i++) r(i) *= o;
     return r;
   }
   void operator*=(T o) {
@@ -453,16 +470,16 @@ class NC {
   NC operator/(NC &o) {
     if (diffDims(o)) throw out_of_range("incompatible dimensions");
     NC r(*this);
-    for (int i = 0; i < r.size; i++) r(i) /= o(i);
+    for (size_t i = 0; i < r.size; i++) r(i) /= o(i);
     return r;
   }
   void operator/=(NC &o) {
     if (diffDims(o)) throw out_of_range("incompatible dimensions");
-    for (int i = 0; i < size; i++) at(i) /= o(i);
+    for (size_t i = 0; i < size; i++) at(i) /= o(i);
   }
   NC operator/(T o) {
     NC r(*this);
-    for (int i = 0; i < r.size; i++) r(i) /= o;
+    for (size_t i = 0; i < r.size; i++) r(i) /= o;
     return r;
   }
   void operator/=(T o) {
@@ -562,7 +579,7 @@ class NC {
 
   NC filter(function<bool(T)> test) const {
     NC res(dims);
-    for (int i = 0; i < size; i++)
+    for (size_t i = 0; i < size; i++)
       if (test(data[i])) res.data[i] = data[i];
     return res;
   }
@@ -570,10 +587,11 @@ class NC {
   NC filter(string expr) const {  // filter by evaluated string expr.
     NC res(dims);
 
-    Evaluator ev(expr);  // compile
-    if (ev.ok) {
-      for (int i = 0; i < size; i++)
-        if (ev.evaluate(data[i])) res.data[i] = data[i];
+    BoolCompiler<T> bc;  // compile
+
+    if (bc.compile(expr)) {
+      for (size_t i = 0; i < size; i++)
+        if (bc.evaluate(data[i])) res.data[i] = data[i];
     } else
       throw runtime_error(
           strcat((char *)"syntax error in expression:", (char *)expr.c_str()));
@@ -584,11 +602,29 @@ class NC {
       const {  // return a 1d array of items that match test
     NC res;
 
-    for (int i = 0; i < size; i++)
+    for (size_t i = 0; i < size; i++)
       if (test(data[i])) res.data.push_back(data[i]);
 
-    res.dims = {(int)res.data.size()};  // 1d size
+    res.dims = {res.data.size()};  // 1d size
     res.__recalc();
+    return res;
+  }
+
+  NC match(string expr) const {  // return a 1d array of items that match test
+    NC res;
+
+    BoolCompiler<T> bc;  // compile
+
+    if (bc.compile(expr)) {
+      for (size_t i = 0; i < size; i++)
+        if (bc.evaluate(data[i])) res.data.push_back(data[i]);
+    } else
+      throw runtime_error(
+          strcat((char *)"syntax error in expression:", (char *)expr.c_str()));
+
+    res.dims = {res.data.size()};  // 1d size
+    res.__recalc();
+
     return res;
   }
 
@@ -613,7 +649,7 @@ class NC {
     NC res(ndim);  // ndim.size == sdim.size
 
     // assign slice of combs applying fc func.
-    int cr = 0;  // res comb counter
+    size_t cr = 0;  // res comb counter
     auto combRes = combinations(res.dims);
     for (auto &c : combinations(ndim))
       res.assign(fc(slice(c), res.dims), combRes[cr++ % combRes.size()]);
@@ -622,6 +658,21 @@ class NC {
   }
 
  private:
+  VInt __string2VInt(const string &s) {
+    VInt v;
+    regex re(R"(\d+)");
+
+    for (auto it = sregex_token_iterator(s.begin(), s.end(), re);
+         it != sregex_token_iterator(); it++) {
+      try {
+        v.push_back(stol(*it));
+      } catch (const std::invalid_argument &e) {
+        cerr << *it << ":invalid number" << endl;
+      }
+    }
+
+    return v;
+  }
   vector<T> __fromString(const string &s, const string regExp) {
     regex re(regExp);
 
@@ -644,7 +695,7 @@ class NC {
   NC fromString(const string &s, const string regExp = __regExp) {
     data = __fromString(s, regExp);
 
-    dims = {(int)data.size()};  // 1d size
+    dims = {data.size()};  // 1d size
     __recalc();
 
     return *this;
@@ -661,7 +712,7 @@ class NC {
         data.insert(data.end(), v.begin(), v.end());
       }
 
-      dims = {(int)data.size()};  // 1d size
+      dims = {data.size()};  // 1d size
       __recalc();
     }
     return *this;
@@ -670,10 +721,15 @@ class NC {
  private:
   // misc
   string fmt(const char *format, ...) {
-    string buffer(1024, 0);
+    char buffer[1024];
+
+    memset(buffer, 0, sizeof(buffer));
+
     va_list args;
     va_start(args, format);
-    vsnprintf((char *)buffer.c_str(), buffer.size(), format, args);
+
+    vsnprintf(buffer, sizeof(buffer) - 1, format, args);
+
     va_end(args);
     return buffer;
   }
@@ -681,13 +737,13 @@ class NC {
   VVInt combinations(const VInt &inArr) {
     VInt currComb, wArr;
 
-    function<VVInt(int)> genCombs = [&](int ix) -> VVInt {
+    function<VVInt(size_t)> genCombs = [&](size_t ix) -> VVInt {
       VVInt res;
 
       if (ix == wArr.size())
         res = {currComb};
       else {
-        for (int i = 0; i < wArr[ix]; i++) {
+        for (size_t i = 0; i < wArr[ix]; i++) {
           currComb[ix] = i;
           for (auto &c : genCombs(ix + 1)) res.push_back(c);
         }
@@ -719,17 +775,7 @@ class NC {
     return strToDims(desc);
   }
   VInt strToDims(string desc) {  // #,#,...,#
-    size_t start = 0, end = desc.find(',');
-    VInt vdim;
-    auto _desc = desc.c_str();
-
-    while (end != string::npos) {
-      vdim.push_back(stoi(desc.substr(start, end - start)));
-      start = end + 1;
-      end = desc.find(',', start);
-    }
-    vdim.push_back(stoi(desc.substr(start)));
-    return vdim;
+    return __string2VInt(desc);
   }
 
   // numpy interface
@@ -762,10 +808,10 @@ class NC {
 
     if ((fh = fopen(name.c_str(), "rb")) != nullptr) {
       HeaderNPY hdr;
-      assert(fread(&hdr, sizeof(hdr), 1, fh) == sizeof(hdr));
+      assert(fread(&hdr, 1, sizeof(hdr), fh) == sizeof(hdr));
 
       string desc(hdr.headLen, ' ');
-      assert(fread(desc.data(), 1, desc.size() == desc.size(), fh));
+      assert(fread(desc.data(), 1, desc.size(), fh) == desc.size());
 
       nc = NC(descToDims(desc));  // (#,#,#)
       assert(fread(nc.data.data(), 1, nc.sizeBytes, fh) == nc.sizeBytes);
@@ -786,18 +832,18 @@ class NC {
     assert((ndims == 2 && dim0 == dim(1)) && "non N x N matrix");
   }
 
-  inline int &dim(int ix) {  // dims in reverse order
+  inline size_t &dim(int ix) {  // dims in reverse order
     assert(ix < ndims && "dims index out of range");
     return dims[ndims - 1 - ix];
   }
 
  public:
   NC coFactor(int x) {  // cofactor remove row 1, current col(x)
-    int n = dim0;
+    size_t n = dim0;
     NC res(n - 1, n - 1);
 
-    for (int i = 1, si = 0; i < n; i++, si++)  // remove row(1)
-      for (int j = 0, sj = 0; j < n; j++)
+    for (size_t i = 1, si = 0; i < n; i++, si++)  // remove row(1)
+      for (size_t j = 0, sj = 0; j < n; j++)
         if (j != x) res.at(si, sj++) = at(i, j);  // remove col(x)
 
     return res;
@@ -809,7 +855,7 @@ class NC {
   }
 
   T _detnxnMT(NC a) {  // cofactor based, very slow !!
-    int n = a.dim0;
+    size_t n = a.dim0;
 
     switch (n) {
       case 1:
@@ -822,7 +868,7 @@ class NC {
                (a(0, 2) * (a(1, 0) * a(2, 1) - a(1, 1) * a(2, 0)));
       default: {
         T d = 0;
-        for (int x = 0; x < n; x++)
+        for (size_t x = 0; x < n; x++)
           d += (x % 2 == 0 ? 1 : -1) * a.at(0, x) * a._detnxnMT(a.coFactor(x));
 
         return d;
@@ -836,13 +882,13 @@ class NC {
 
     assertQuadratic();
 
-    int n = dim0;
+    size_t n = dim0;
 
-    for (int i = 0; i < n; i++) {
-      for (int j = i + 1; j < n; j++) {
+    for (size_t i = 0; i < n; i++) {
+      for (size_t j = i + 1; j < n; j++) {
         if (a(i, i) != static_cast<T>(0)) {
           T factor = a(j, i) / a(i, i);
-          for (int k = i; k < n; k++) a(j, k) -= factor * a(i, k);
+          for (size_t k = i; k < n; k++) a(j, k) -= factor * a(i, k);
         }
       }
       res *= a(i, i);
@@ -850,19 +896,23 @@ class NC {
     return res;
   }
 
-  NC range(int from, int to) {  // 1d range array
+  NC range(size_t from, size_t to) {  // 1d range array
     NC res(to - from);
     copy(data.begin() + from, data.begin() + to, res.data.begin());
     return res;
   }
 
+  NC slice(size_t i1, size_t i0) {
+    VInt v{i1, i0};
+    return slice(v);
+  }
   NC slice(const VInt &index) {  // index is < ndim-1 size, NC a(3,4,5); auto
                                  // b=a.slice({2,3});
     assert(!index.empty() && "slice with empty array not allowed");
 
     auto widx = index;
     widx.insert(widx.end(), ndims - widx.size(), 0);
-    int istart = calcIndex(widx);
+    size_t istart = calcIndex(widx);
 
     widx = index;
     for (int i = index.size(); i < ndims; i++) widx.push_back(dims[i] - 1);
@@ -887,7 +937,7 @@ class NC {
     assertQuadratic();
 
     if (ndims == 2) {
-      res = NC(1);
+      res = NC({1});
       res.at(0) = detLU_MT();
     } else {
       VInt tdim(dims.begin() + 0, dims.end() - 2);  // dims[0..-2]
@@ -908,7 +958,7 @@ class NC {
     assertQuadratic();
 
     if (ndims == 2) {
-      res = NC(1);
+      res = NC({1});
       res.at(0) = detBareiss();
     } else {
       VInt tdim(dims.begin() + 0, dims.end() - 2);  // dims[0..-2]
@@ -919,7 +969,7 @@ class NC {
     return res;
   }
 
-  void rangeSlice(const VInt &index, int &aStart, int &aEnd) {
+  void rangeSlice(const VInt &index, size_t &aStart, size_t &aEnd) {
     if (index.empty()) {
       aStart = aEnd = 0;
     } else {
@@ -934,24 +984,24 @@ class NC {
   }
 
   void assign(const NC a, const VInt &_dims) {
-    int aStart, aEnd;
+    size_t aStart, aEnd;
     rangeSlice(_dims, aStart, aEnd);
     for (int i = 0; i < a.size; i++) data[i + aStart] = a.data[i];
   }
-  void swap(int i, int j, int k, int l) {
+  void swap(size_t i, size_t j, size_t k, size_t l) {
     auto tmp = at(i, j);
     at(i, j) = at(k, l);
     at(k, l) = tmp;
   }
-  int prod(VInt &v) {
-    int p = 1;
+  size_t prod(VInt &v) {
+    size_t p = 1;
     for (auto i : v) p *= i;
     return p;
   }
 
   T diagProd() {  // diag. prod. N x N matrix
     T res = (T)1;
-    for (int i = 0; i < dim0; i++) res *= at(i, i);
+    for (size_t i = 0; i < dim0; i++) res *= at(i, i);
     return res;
   }
 
@@ -960,8 +1010,8 @@ class NC {
     return a;
   }
 
-  int transposedCoord(int index) {
-    int res = 0;
+  size_t transposedCoord(int index) {
+    size_t res = 0;
     for (int i = 0; i < ndims && index != 0; i++) {
       res += (index % dims[i]) * mlt[i];
       index /= dims[i];
@@ -977,12 +1027,13 @@ class NC {
   }
 
   int _min(int a, int b) { return a < b ? a : b; }
+  size_t _min(size_t a, size_t b) { return a < b ? a : b; }
 
   NC dotST(NC &a, NC &b) { return a.dotST(b); }
   NC dot(NC &a, NC &b) { return a.dot(b); }
 
  private:
-  NC __prepDot(NC &a, int &pivotPos, int &pivd, int &prs) {
+  NC __prepDot(NC &a, size_t &pivotPos, size_t &pivd, size_t &prs) {
     pivotPos = _min(1, a.ndims - 1);  // position in a of pivot dim in  1|0
     pivd = a.dim(pivotPos);           // pivot dimension, a.dim(1|0) = dim(0)
 
@@ -1004,14 +1055,14 @@ class NC {
 
  public:
   NC dotST(NC &a) {
-    int pivotPos, pivd, prs;
+    size_t pivotPos, pivd, prs;
     NC res = __prepDot(a, pivotPos, pivd, prs);
 
     switch (pivotPos) {
       case 0: {
-        for (int ixs = 0, sStart = 0; ixs < prs; ixs++) {
+        for (size_t ixs = 0, sStart = 0; ixs < prs; ixs++) {
           T p = 0;  // calc dot 1x1
-          for (int r = 0; r < pivd; r++) p += at(sStart + r) * a.at(r);
+          for (size_t r = 0; r < pivd; r++) p += at(sStart + r) * a.at(r);
           res.at(ixs) = p;
           sStart += pivd;  // next self pivd slice position
         }
@@ -1022,18 +1073,18 @@ class NC {
         if (a.ndims > 2)
           raDim.insert(raDim.begin(), a.dims.begin(), a.dims.end() - 2);
 
-        int ahi1 = (a.ndims > 1) ? a.dim(1) : 1;
-        int pra = prod(raDim), aStride = a.size / pra, adim0 = a.dim0,
-            ahi0 = a.dim0;
+        size_t ahi1 = (a.ndims > 1) ? a.dim(1) : 1;
+        size_t pra = prod(raDim), aStride = a.size / pra, adim0 = a.dim0,
+               ahi0 = a.dim0;
 
-        for (int ixs = 0, ixr = 0, sStart = 0; ixs < prs;
+        for (size_t ixs = 0, ixr = 0, sStart = 0; ixs < prs;
              ixs++, sStart += pivd) {  // 1x2 reduction of self
-          for (int ixa = 0, aStart = 0; ixa < pra;
+          for (size_t ixa = 0, aStart = 0; ixa < pra;
                ixa++, aStart += aStride) {  // next a slice
 
-            for (int c = 0; c < ahi0; c++) {
+            for (size_t c = 0; c < ahi0; c++) {
               T p = 0;
-              for (int r = 0; r < ahi1; r++)
+              for (size_t r = 0; r < ahi1; r++)
                 p += at(sStart + r) * a.at(aStart + r * adim0 + c);
               res.at(ixr++) = p;
             }
@@ -1049,15 +1100,15 @@ class NC {
   }
 
   NC dot(NC &a) {
-    int pivotPos, pivd, prs;
+    size_t pivotPos, pivd, prs;
     NC res = __prepDot(a, pivotPos, pivd, prs);
 
     switch (pivotPos) {
       case 0: {
         MyThread().runSeq([&](int ix, int nth) {
-          for (int sStart = ix * pivd; ix < prs; ix += nth) {
+          for (size_t sStart = ix * pivd; ix < prs; ix += nth) {
             T p = 0;
-            for (int r = 0; r < pivd; r++) p += at(sStart + r) * a.at(r);
+            for (size_t r = 0; r < pivd; r++) p += at(sStart + r) * a.at(r);
             res.at(ix) = p;
           }
         });
@@ -1067,18 +1118,18 @@ class NC {
         if (a.ndims > 2)
           raDim.insert(raDim.begin(), a.dims.begin(), a.dims.end() - 2);
 
-        int pra = prod(raDim), aStride = a.size / pra, adim0 = a.dim0,
-            ahi0 = a.dim0;
-        int ahi1 = (a.ndims > 1) ? a.dim(1) : 1;
+        size_t pra = prod(raDim), aStride = a.size / pra, adim0 = a.dim0,
+               ahi0 = a.dim0;
+        size_t ahi1 = (a.ndims > 1) ? a.dim(1) : 1;
 
         MyThread().runSeq([&](int ix, int nth) {
           for (; ix < prs; ix += nth) {
-            for (int ixa = 0, aStart = 0, sStart = ix * pivd,
-                     ixr = ix * (pra * adim0);
+            for (size_t ixa = 0, aStart = 0, sStart = ix * pivd,
+                        ixr = ix * (pra * adim0);
                  ixa < pra; ixa++, aStart += aStride) {
-              for (int c = 0; c < ahi0; c++) {
+              for (size_t c = 0; c < ahi0; c++) {
                 T p = 0;
-                for (int r = 0; r < ahi1; r++)
+                for (size_t r = 0; r < ahi1; r++)
                   p += at(sStart + r) * a.at(aStart + r * adim0 + c);
                 res.at(ixr++) = p;
               }
@@ -1094,28 +1145,28 @@ class NC {
   }
 
   NC inv_nxn() {
-    int n = dim0;
+    size_t n = dim0;
     NC res = NC::identity(n);
 
     NC a(*this);
 
-    for (int j = 0; j < n; j++) {
-      for (int i = j; i < n; i++) {
+    for (size_t j = 0; j < n; j++) {
+      for (size_t i = j; i < n; i++) {
         if (a(i, j) != 0) {
-          for (int k = 0; k < n; k++) {
+          for (size_t k = 0; k < n; k++) {
             a.swap(j, k, i, k);
             res.swap(j, k, i, k);
           }
           auto tmp = 1 / a(j, j);
-          for (int k = 0; k < n; k++) {
+          for (size_t k = 0; k < n; k++) {
             a(j, k) = tmp * a(j, k);
             res(j, k) = tmp * res(j, k);
           }
 
-          for (int k = 0; k < n; k++) {
+          for (size_t k = 0; k < n; k++) {
             if (k != j) {
               tmp = -a(k, j);
-              for (int c = 0; c < n; c++) {
+              for (size_t c = 0; c < n; c++) {
                 a(k, c) = a(k, c) + tmp * a(j, c);
                 res(k, c) = res(k, c) + tmp * res(j, c);
               }
@@ -1148,7 +1199,7 @@ class NC {
     assertQuadratic();
 
     if (ndims == 2) {
-      res = NC(1);
+      res = NC({1});
       res.at(0) = detBareiss();
     } else {
       VInt tdim(dims.begin() + 0, dims.end() - 2);  // dims[0..-2]
@@ -1169,15 +1220,15 @@ class NC {
   NC transposeST() {
     NC res(revVInt(dims));
 
-    for (int i = 1; i < size / 2 - 1; i++)
+    for (size_t i = 1; i < size / 2 - 1; i++)
       res.at(res.transposedCoord(i)) = at(i);
   }
 
   NC transpose() {  // MT version
     NC res(revVInt(dims));
 
-    MyThread(size / 2 - 1).run([&](int t, int from, int to) {
-      for (int i = from; i < to; i++) res.at(res.transposedCoord(i)) = at(i);
+    MyThread(size / 2 - 1).run([&](int t, size_t from, size_t to) {
+      for (size_t i = from; i < to; i++) res.at(res.transposedCoord(i)) = at(i);
     });
   }
 
@@ -1185,24 +1236,24 @@ class NC {
     assert_nxn();
 
     NC L(dims), U(dims);  // LU decomp.
-    int n = dim0;
+    size_t n = dim0;
 
-    for (int i = 0; i < n; i++) {  // L
-      for (int j = 0; j < n; j++) {
+    for (size_t i = 0; i < n; i++) {  // L
+      for (size_t j = 0; j < n; j++) {
         if (j >= i) {
           L(j, i) = at(j, i);
-          for (int k = 0; k < i; k++) {
+          for (size_t k = 0; k < i; k++) {
             L(j, i) -= L(j, k) * U(k, i);
           }
         }
       }
-      for (int j = 0; j < n; j++) {  // U
+      for (size_t j = 0; j < n; j++) {  // U
         if (j >= i) {
           if (j == i)
             U(i, j) = 1;
           else {
             U(i, j) = at(i, j) / L(i, i);
-            for (int k = 0; k < i; k++) {
+            for (size_t k = 0; k < i; k++) {
               U(i, j) -= (L(i, k) * U(k, j)) / L(i, i);
             }
           }
@@ -1211,7 +1262,7 @@ class NC {
     }
 
     T detL = 1, detU = 1;  // mult L*U
-    for (int i = 0; i < n; i++) {
+    for (size_t i = 0; i < n; i++) {
       detL *= L.at(i, i);
       detU *= U.at(i, i);
     }
@@ -1225,14 +1276,14 @@ class NC {
 
     NC a(*this);  // work copy
 
-    Th.run([&](int t, int start, int end) {
-      for (int k = 0; k < dim0; ++k) {
+    Th.run([&](int t, size_t start, size_t end) {
+      for (size_t k = 0; k < dim0; ++k) {
         sync_point.arrive_and_wait();  // Synchronize threads
 
-        for (int i = start; i < end; ++i)
+        for (size_t i = start; i < end; ++i)
           if (i > k) {
             a(i, k) /= a(k, k);
-            for (int j = k + 1; j < dim0; ++j) a(i, j) -= a(i, k) * a(k, j);
+            for (size_t j = k + 1; j < dim0; ++j) a(i, j) -= a(i, k) * a(k, j);
           }
       }
     });
@@ -1242,12 +1293,12 @@ class NC {
 
   T detLU_01() {
     NC a(*this);  // work copy
-    int n = dim0;
+    size_t n = dim0;
 
-    for (int k = 0; k < n; ++k) {
-      for (int i = k + 1; i < n; ++i) {
+    for (size_t k = 0; k < n; ++k) {
+      for (size_t i = k + 1; i < n; ++i) {
         a(i, k) /= a(k, k);
-        for (int j = k + 1; j < n; ++j) a(i, j) -= a(i, k) * a(k, j);
+        for (size_t j = k + 1; j < n; ++j) a(i, j) -= a(i, k) * a(k, j);
       }
     }
 
@@ -1262,16 +1313,16 @@ class NC {
 
     NC a(*this);  // working copy
 
-    Th.run([&](int t, int start, int end) {
-      for (int k = 0; k < a.dim0; ++k) {
+    Th.run([&](int t, size_t start, size_t end) {
+      for (size_t k = 0; k < a.dim0; ++k) {
         sync_point.arrive_and_wait();  // Synchronize threads at the start of
                                        // each step
 
-        for (int i = start; i < end; ++i) {
+        for (size_t i = start; i < end; ++i) {
           if (i <= k)
             continue;  // Skip rows that are not part of the current step
 
-          for (int j = k + 1; j < a.dim0; ++j) {
+          for (size_t j = k + 1; j < a.dim0; ++j) {
             // lock_guard<mutex> lock(mtx); // not required, no race conditions
             if (k == 0) {
               a(i, j) = a(i, j) * at(k, k) - at(i, k) * a(k, j);
@@ -1285,4 +1336,70 @@ class NC {
     });
     return a.data.back();  // det is last item a(n-1,n-1)
   }
+
+#if __USE_COMPRESS == 1
+  typedef enum { Inflate, Deflate } OpType;
+
+ private:  // vector compress / decompress
+  class ZS {
+   public:
+    z_stream zs;
+    OpType ot = Deflate;
+
+    template <typename TVI, typename TVO>
+    ZS(OpType ot, vector<TVI> &vin, vector<TVO> &vout) : ot(ot) {
+      memset(&zs, 0, sizeof(zs));  // zs = 0
+
+      if (ot == Inflate)  // init
+        inflateInit(&zs);
+      else {  // deflate
+        deflateInit(&zs, Z_BEST_COMPRESSION);
+
+        vout.resize(vin.size() * sizeof(TVI) / sizeof(TVO));  // resize vout
+      }
+
+      zs.next_in = (Byte *)vin.data();  // assign input & output
+      zs.avail_in = vin.size() * sizeof(TVI);
+
+      zs.next_out = (Byte *)vout.data();
+      zs.avail_out = vout.size() * sizeof(TVO);
+
+      switch (ot) {
+        case Inflate: {
+          int ret = inflate(&zs, 0);  // inflate
+
+          if (ret == Z_STREAM_ERROR || ret == Z_DATA_ERROR ||
+              ret == Z_MEM_ERROR)
+            throw(runtime_error("Exception during zlib decompression: " +
+                                to_string(ret)));
+
+          inflateEnd(&zs);
+        } break;
+
+        case Deflate: {
+          int ret = deflate(&zs, Z_FINISH);  // deflate
+
+          if (ret != Z_STREAM_END)
+            throw(runtime_error("error compressing:" + to_string(ret)));
+
+          deflateEnd(&zs);
+
+          vout.resize(zs.total_out);  // resize vout to compressed size
+        } break;
+      }
+
+      vin.clear();  // vin clear
+    }
+
+    int compSize() { return zs.total_out; }
+  };
+
+ public:
+  void compress() { ZS zs(Deflate, data, _compressedData); }
+  void decompress() {
+    data.resize(sizeBytes);
+    ZS zs(Inflate, _compressedData, data);
+  }
+  size_t compSize() { return _compressedData.size(); }
+#endif
 };
