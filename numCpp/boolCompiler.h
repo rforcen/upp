@@ -8,7 +8,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
-#include <cstddef>
+
 
 using namespace std;
 
@@ -82,7 +82,7 @@ class BoolCompiler {
   int seed = 0;
 
   // compiler
-  byte Code[4096 * 4];
+  int Code[4096 * 4];
   int pc = 0, CodeSize = 0;
 
  private:
@@ -383,15 +383,15 @@ class BoolCompiler {
     err = true;
   }
   void gen(int token, T f) {  // code Generation
-    Code[pc++] = (byte)token;
-    Code[pc++] = (byte)consts.size();
+    Code[pc++] = token;
+    Code[pc++] = consts.size();
     consts.push_back(f);
   }
-  void gen(int token, byte i) {
-    Code[pc++] = (byte)token;
-    Code[pc++] = (byte)i;
+  void gen(int token, int i) {
+    Code[pc++] = token;
+    Code[pc++] = i;
   }
-  void gen(int token) { Code[pc++] = (byte)token; }
+  void gen(int token) { Code[pc++] = token; }
   void Ce0() {
     if (!err) {
       Ce00();

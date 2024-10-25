@@ -577,14 +577,24 @@ class NC {
     return *this;
   }
 
-  NC filter(function<bool(T)> test) const {
+  NC filterST(function<bool(T)> test) const {
     NC res(dims);
     for (size_t i = 0; i < size; i++)
       if (test(data[i])) res.data[i] = data[i];
     return res;
   }
 
-  NC filter(string expr) const {  // filter by evaluated string expr.
+  NC filter(function<bool(T)> test) const {  // MT
+    NC res(dims);
+    
+    MyThread(size).run([&](int t, size_t from, size_t to) {
+      for (auto i = from; i < to; i++)
+        if (test(data[i])) res.data[i] = data[i];
+    });
+    return res;
+  }
+
+  NC filterST(string expr) const {  // filter by evaluated string expr.
     NC res(dims);
 
     BoolCompiler<T> bc;  // compile
@@ -592,6 +602,22 @@ class NC {
     if (bc.compile(expr)) {
       for (size_t i = 0; i < size; i++)
         if (bc.evaluate(data[i])) res.data[i] = data[i];
+    } else
+      throw runtime_error(
+          strcat((char *)"syntax error in expression:", (char *)expr.c_str()));
+    return res;
+  }
+
+  NC filter(string expr) const {  // MT: filter by evaluated string expr.
+    NC res(dims);
+
+    BoolCompiler<T> bc;  // compile
+
+    if (bc.compile(expr)) {
+      MyThread(size).run([&](int t, size_t from, size_t to) {
+        for (auto i = from; i < to; i++)
+          if (bc.evaluate(data[i])) res.data[i] = data[i];
+      });
     } else
       throw runtime_error(
           strcat((char *)"syntax error in expression:", (char *)expr.c_str()));
